@@ -1,0 +1,53 @@
+# Ignore macOS system files
+.DS_Store
+
+# Ignore Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Ignore node_modules directory for Node.js projects
+node_modules/
+/venv/
+
+# Ignore log files
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore build directories
+/dist
+/build
+/out
+/tmp
+/temp
+
+# Ignore dependency directories
+/.pnp
+.pnp.js
+/.yarn-integrity
+
+# Ignore environment variables
+.env
+.env.local
+.env.*.local
+
+# Ignore IDE/editor configuration files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Ignore Python files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+
+
