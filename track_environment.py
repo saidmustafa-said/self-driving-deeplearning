@@ -1,3 +1,5 @@
+# track_environment.py
+
 import pygame
 import math
 
@@ -55,29 +57,21 @@ class BallEnvironment:
 
     def get_track_left(self, y):
         """Calculate the left boundary of the S-shaped track based on y position."""
-        # Increase the frequency and amplitude for more curvature
         return (WIDTH / 2 - TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
 
     def get_track_right(self, y):
         """Calculate the right boundary of the S-shaped track based on y position."""
-        # Increase the frequency and amplitude for more curvature
         return (WIDTH / 2 + TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
 
     def check_collision(self):
         """Check if the ball has collided with the sides or reached the top."""
-        # Check for collision with the track boundaries
         ball_left = self.ball_x - BALL_RADIUS
         ball_right = self.ball_x + BALL_RADIUS
         left_bound = self.get_track_left(self.ball_y)
         right_bound = self.get_track_right(self.ball_y)
-        if ball_left <= left_bound:
-            print("Left collision detected!")
-            return True  # Collision with sides
-        if ball_right >= right_bound:
-            print("Right collision detected!")
+        if ball_left <= left_bound or ball_right >= right_bound:
             return True  # Collision with sides
         if self.ball_y < 0:  # Ball has reached the top of the screen
-            print("Winning condition reached!")
             return True  # Winning condition
         return False  # No collision
 
@@ -111,6 +105,11 @@ class BallEnvironment:
 
         pygame.display.flip()
 
+    def get_observation(self):
+        """Get the current state of the environment as an observation vector."""
+        # Return the current ball's position and speed as the state
+        return [self.ball_x / WIDTH, self.ball_y / HEIGHT, self.ball_speed / MAX_SPEED]
+
 
 def main():
     env = BallEnvironment()
@@ -119,16 +118,14 @@ def main():
     running = True
 
     while running:
-        accel_input = 0
-        turn_input = 0
-
-        # Process events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
-        # Get key states for movement control
+        # Here you can replace this section with your model code for action selection
         keys = pygame.key.get_pressed()
+        accel_input = 0
+        turn_input = 0
         if keys[pygame.K_UP]:       # Accelerate
             accel_input = 1
         if keys[pygame.K_LEFT]:     # Turn left

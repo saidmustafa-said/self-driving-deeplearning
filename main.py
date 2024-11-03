@@ -4,11 +4,12 @@ import pygame
 import sys
 import random
 import torch
-from track_environment import CarEnvironment
+from track_environment import BallEnvironment  # Updated import
 from model import ModelManager
 
+
 # Initialize environment and model
-env = CarEnvironment()
+env = BallEnvironment()
 model_manager = ModelManager()
 
 # Load model if available
@@ -35,7 +36,7 @@ while running:
             break
 
     # Get observation
-    observation = [env.car_x, env.car_y, env.car_angle, env.car_speed]
+    observation = env.get_observation()
 
     # Choose action (epsilon-greedy)
     if random.random() < epsilon:
@@ -50,12 +51,13 @@ while running:
     # Update car position and check collision
     env.update_position(acceleration, turn_angle)
     done = env.check_collision()
-    reward = -10 if done else 0.1 * env.car_speed
+    # Adjust reward based on ball speed
+    reward = -10 if done else 0.1 * env.ball_speed
     if done:
         env.reset()
 
     # Store experience and replay
-    next_observation = [env.car_x, env.car_y, env.car_angle, env.car_speed]
+    next_observation = env.get_observation()
     model_manager.store_experience(
         observation, (acceleration, turn_angle), reward, next_observation, done)
     model_manager.replay()

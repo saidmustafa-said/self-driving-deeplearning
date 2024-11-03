@@ -10,9 +10,9 @@ from collections import deque
 class CarNet(nn.Module):
     def __init__(self):
         super(CarNet, self).__init__()
-        self.fc1 = nn.Linear(4, 128)
+        self.fc1 = nn.Linear(3, 128)  # 3 inputs for the observation
         self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, 2)
+        self.fc3 = nn.Linear(128, 2)  # Output: acceleration and turn angle
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -46,6 +46,7 @@ class ModelManager:
         """Train the model using experience replay."""
         if len(self.memory) < self.batch_size:
             return
+
         batch = random.sample(self.memory, self.batch_size)
         for observation, action, reward, next_observation, done in batch:
             observation_tensor = torch.tensor(observation, dtype=torch.float32)
@@ -54,15 +55,20 @@ class ModelManager:
             next_observation_tensor = torch.tensor(
                 next_observation, dtype=torch.float32)
 
-            # Predict Q values
-            target = self.model(observation_tensor)
+            # Q-learning update rule
+            current_q_values = self.model(observation_tensor)
             with torch.no_grad():
-                next_target = self.model(next_observation_tensor)
-                target_action = reward_tensor + \
-                    (self.gamma * torch.max(next_target)) * (1 - int(done))
+                next_q_values = self.model(next_observation_tensor)
+                max_next_q_value = torch.max(next_q_values)
+                target_q_value = reward_tensor + \
+                    (self.gamma * max_next_q_value * (1 - int(done)))
 
-            # Update the model
-            loss = self.criterion(target, action_tensor)
+            # Update current q values based on actions
+            current_q_values[0] = target_q_value  # For acceleration
+            current_q_values[1] = target_q_value  # For turn angle
+
+            # Compute loss and backpropagate
+            loss = self.criterion(current_q_values, action_tensor)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
