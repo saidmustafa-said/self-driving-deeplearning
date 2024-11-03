@@ -1,101 +1,80 @@
+# project/main.py
 import pygame
+import sys
 import random
-import numpy as np
 import torch
-from model import ModelManager
 from track_environment import BallEnvironment
+from model import ModelManager
 
-# Initialize pygame
-pygame.init()
+# Initialize environment and model
+env = BallEnvironment()
+model_manager = ModelManager()
 
-# Constants
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
-FPS = 60
-NUM_BALLS = 5
+# Load model if available
+try:
+    model_manager.load()
+    print("Model loaded successfully.")
+except FileNotFoundError:
+    print("No model found, starting fresh.")
 
+# Game loop parameters
+running = True
+clock = pygame.time.Clock()
+epsilon = 1.0  # Exploration rate
+epsilon_decay = 0.995
+epsilon_min = 0.01
+total_reward = 0
 
-def get_observation(balls):
-    """Get the observation vector from the current state of the balls."""
-    return np.array([[ball.x, ball.y, ball.speed] for ball in balls]).flatten()
+while running:
+    # Event handling
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
+            model_manager.save()  # Save model upon exit
+            running = False
+            break
 
+    # Get observation
+    observation = env.get_observation()
+    model_manager.log_activations(observation)  # Log activations once
 
-def main():
-    clock = pygame.time.Clock()
-    model_manager = ModelManager(input_size=3 * NUM_BALLS, num_balls=NUM_BALLS)
+    # Choose action (epsilon-greedy)
+    if random.random() < epsilon:
+        acceleration = random.uniform(-1, 1)
+        turn_angle = random.uniform(-1, 1)
+    else:
+        with torch.no_grad():
+            observation_tensor = torch.tensor(
+                observation, dtype=torch.float32)
+            action = model_manager.model(observation_tensor)
+            acceleration, turn_angle = action[0].item(), action[1].item()
 
+    # Clamp action values to prevent extreme actions
+    acceleration = max(-1, min(acceleration, 1))
+    turn_angle = max(-1, min(turn_angle, 1))
 
-    # Initialize the environment
-    env = BallEnvironment(num_balls=NUM_BALLS)
+    # Update environment
+    env.update_position(acceleration, turn_angle)
+    reward = 0.1 * min(env.ball_speed, env.ball_speed)  # Cap reward
+    done = env.check_collision()
+    total_reward += reward
 
-    epsilon = 1.0  # Initial epsilon for exploration
-    epsilon_decay = 0.995
-    epsilon_min = 0.1
-    episodes = 1000
+    # Store experience
+    next_observation = env.get_observation()
+    model_manager.store_experience(
+        observation, (acceleration, turn_angle), reward, next_observation, done)
 
-    for episode in range(episodes):
-        observation = get_observation(env.balls)
-        done = False
-        total_reward = 0
+    # Replay experience for training
+    model_manager.replay()
 
-        while not done:
+    # Render environment
+    env.render(total_reward)
 
-            # Choose actions for each ball (epsilon-greedy)
-            # Choose actions for each ball (epsilon-greedy)
-            accel_inputs = []
-            turn_inputs = []
-            for i in range(NUM_BALLS):
-                if random.random() < epsilon:
-                    # Random actions for exploration
-                    accel_inputs.append(random.uniform(-1, 1))  # Acceleration
-                    turn_inputs.append(random.uniform(-2, 2))   # Turning
-                else:
-                    with torch.no_grad():
-                        output = model_manager.model(
-                            torch.tensor(observation, dtype=torch.float32))
-                        print("Model output shape:", output.shape)  # Debugging line
-                        # Get actions for each ball
-                        # Acceleration for ball i
-                        accel_inputs.append(output[2 * i].item())
-                        turn_inputs.append(output[2 * i + 1].item())  # Turn for ball i
+    # Epsilon decay
+    if epsilon > epsilon_min:
+        epsilon *= epsilon_decay
 
+    # Cap FPS
+    clock.tick(60)
 
-            # Apply actions to balls
-            for i, ball in enumerate(env.balls):
-                ball.acceleration = accel_inputs[i]
-                ball.turn = turn_inputs[i]
-                ball.move()
-
-            # Render the environment
-            env.render()
-
-            # Simulate a reward and check for done condition
-            reward = 1  # Reward for staying within bounds, for example
-            done = env.check_collisions()
-            total_reward += reward
-
-            # Store experience
-            next_observation = get_observation(env.balls)
-            actions = []
-            for i in range(NUM_BALLS):
-                actions.extend([accel_inputs[i], turn_inputs[i]])
-            model_manager.store_experience(
-                observation, actions, reward, next_observation, done)
-
-            # Replay the experiences
-            model_manager.replay()
-
-            observation = next_observation
-
-        # Decay epsilon
-        if epsilon > epsilon_min:
-            epsilon *= epsilon_decay
-
-        print(f"Episode {
-              episode + 1}/{episodes} completed with total reward: {total_reward}")
-
-    pygame.quit()
-
-
-if __name__ == "__main__":
-    main()
+pygame.quit()
+sys.exit()

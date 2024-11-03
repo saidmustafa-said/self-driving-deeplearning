@@ -1,13 +1,15 @@
+# project/track_environment.py
 import pygame
 import math
 
 # Screen settings
 WIDTH = 800
-HEIGHT = 600
+HEIGHT = 700
 BACKGROUND_COLOR = (50, 50, 50)
 
 # Track settings
 TRACK_COLOR = (200, 200, 200)
+WALL_COLOR = (100, 100, 100)
 TRACK_WIDTH = 100  # Width of the track
 
 # Ball settings
@@ -18,72 +20,42 @@ ACCELERATION = 0.2  # Acceleration when moving
 DRAG = 0.1  # Drag to slow down the ball
 
 
-class Ball:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.speed = 0
-        self.acceleration = 0
-        self.turn = 0
-
-    def move(self):
-        # Update speed based on acceleration
-        self.speed += self.acceleration
-        self.speed = max(0, min(self.speed, MAX_SPEED))  # Clamp speed
-
-        # Move the ball based on speed
-        self.x += self.turn
-        self.y -= self.speed  # Move up the screen
-
-        # Keep the ball within the track boundaries
-        if self.x < BALL_RADIUS:
-            self.x = BALL_RADIUS
-        elif self.x > WIDTH - BALL_RADIUS:
-            self.x = WIDTH - BALL_RADIUS
-
-    def draw(self, screen):
-        pygame.draw.circle(screen, BALL_COLOR,
-                           (int(self.x), int(self.y)), BALL_RADIUS)
-
-
 class BallEnvironment:
-    def __init__(self, num_balls=5):
+    def __init__(self):
+        pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Curved S-Shaped Track with Multiple Balls")
-        self.num_balls = num_balls
-        self.balls = [Ball(WIDTH // 2, HEIGHT - BALL_RADIUS)
-                      for _ in range(num_balls)]
+        pygame.display.set_caption("Curved S-Shaped Track with Ball Movement")
+        self.reset()
 
     def reset(self):
-        """Reset all balls to their starting positions."""
-        self.balls = [Ball(WIDTH // 2, HEIGHT - BALL_RADIUS)
-                      for _ in range(self.num_balls)]
+        """Reset the ball to the starting position."""
+        self.ball_x = WIDTH // 2  # Start in the middle of the screen width
+        self.ball_y = HEIGHT - BALL_RADIUS  # Start at the bottom of the screen
+        self.ball_speed = 0  # Initial speed
 
-    def check_collisions(self):
-        """Check if any ball has collided with the sides or reached the top."""
-        for ball in self.balls:
-            if ball.y < 0:  # Winning condition
-                return True
-            if ball.x < BALL_RADIUS or ball.x > WIDTH - BALL_RADIUS:
-                return True  # Collision with sides
-        return False
+    def update_position(self, accel_input, turn_input):
+        """Update ball position based on acceleration and direction."""
+        # Apply acceleration
+        if accel_input > 0:
+            if self.ball_speed < MAX_SPEED:
+                self.ball_speed += ACCELERATION
+        else:
+            # Apply drag when no acceleration
+            self.ball_speed *= (1 - DRAG)
 
-    def render(self):
-        """Render the balls and the background."""
-        self.screen.fill(BACKGROUND_COLOR)
+        # Cap the ball speed after drag
+        self.ball_speed = min(self.ball_speed, MAX_SPEED)
 
-        # Draw the S-shaped track
-        for y in range(0, HEIGHT):
-            x_left = self.get_track_left(y)
-            x_right = self.get_track_right(y)
-            pygame.draw.line(self.screen, TRACK_COLOR,
-                             (x_left, y), (x_right, y))
+        # Update vertical position
+        self.ball_y -= self.ball_speed  # Move upward based on speed
 
-        # Draw the balls
-        for ball in self.balls:
-            ball.draw(self.screen)
+        # Update horizontal position based on turning
+        self.ball_x += turn_input
 
-        pygame.display.flip()
+        # Clamp horizontal position to stay within track boundaries
+        left_bound = self.get_track_left(self.ball_y)
+        right_bound = self.get_track_right(self.ball_y)
+        self.ball_x = max(left_bound, min(self.ball_x, right_bound))
 
     def get_track_left(self, y):
         """Calculate the left boundary of the S-shaped track based on y position."""
@@ -92,3 +64,50 @@ class BallEnvironment:
     def get_track_right(self, y):
         """Calculate the right boundary of the S-shaped track based on y position."""
         return (WIDTH / 2 + TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
+
+    def check_collision(self):
+        """Check if the ball has collided with the sides or reached the top."""
+        ball_left = self.ball_x - BALL_RADIUS
+        ball_right = self.ball_x + BALL_RADIUS
+        left_bound = self.get_track_left(self.ball_y)
+        right_bound = self.get_track_right(self.ball_y)
+        if ball_left <= left_bound or ball_right >= right_bound:
+            return True  # Collision with sides
+        if self.ball_y < 0:  # Ball has reached the top of the screen
+            return True  # Winning condition
+        return False  # No collision
+
+    def render(self, total_reward):
+        """Render the track, ball, and reward display."""
+        self.screen.fill(BACKGROUND_COLOR)
+
+        # Draw the S-shaped track using lines
+        for y in range(0, HEIGHT, 5):
+            x_left = self.get_track_left(y)
+            x_right = self.get_track_right(y)
+            pygame.draw.line(self.screen, TRACK_COLOR,
+                             (x_left, y), (x_right, y))
+
+        # Draw walls
+        for y in range(0, HEIGHT, 5):
+            pygame.draw.line(self.screen, WALL_COLOR, (self.get_track_left(
+                y), y), (self.get_track_left(y), y), 5)
+            pygame.draw.line(self.screen, WALL_COLOR, (self.get_track_right(
+                y), y), (self.get_track_right(y), y), 5)
+
+        # Draw the ball
+        pygame.draw.circle(self.screen, BALL_COLOR, (int(
+            self.ball_x), int(self.ball_y)), BALL_RADIUS)
+
+        # Display reward
+        font = pygame.font.Font(None, 36)
+        reward_text = font.render(
+            f"Total Reward: {total_reward:.2f}", True, (255, 255, 255))
+        self.screen.blit(reward_text, (10, 10))
+
+        pygame.display.flip()
+
+    def get_observation(self):
+        """Get the current state of the environment as an observation vector."""
+        # Return the current ball's position and speed as the state
+        return [self.ball_x / WIDTH, self.ball_y / HEIGHT, self.ball_speed / MAX_SPEED]

@@ -1,0 +1,284 @@
+# project\track_environment.py
+import pygame
+import math
+
+# Screen settings
+WIDTH = 800
+HEIGHT = 700
+BACKGROUND_COLOR = (50, 50, 50)
+
+# Track settings
+TRACK_COLOR = (200, 200, 200)
+WALL_COLOR = (100, 100, 100)
+TRACK_WIDTH = 100  # Width of the track
+
+# Ball settings
+BALL_COLOR = (255, 0, 0)
+BALL_RADIUS = 10
+MAX_SPEED = 5  # Maximum speed of the ball
+ACCELERATION = 0.2  # Acceleration when moving
+DRAG = 0.1  # Drag to slow down the ball
+
+
+class BallEnvironment:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Curved S-Shaped Track with Ball Movement")
+        self.reset()
+
+    def reset(self):
+        """Reset the ball to the starting position."""
+        self.ball_x = WIDTH // 2  # Start in the middle of the screen width
+        self.ball_y = HEIGHT - BALL_RADIUS  # Start at the bottom of the screen
+        self.ball_speed = 0  # Initial speed
+
+    def update_position(self, accel_input, turn_input):
+        """Update ball position based on acceleration and direction."""
+        # Apply acceleration
+        if accel_input > 0:
+            if self.ball_speed < MAX_SPEED:
+                self.ball_speed += ACCELERATION
+        else:
+            # Apply drag when no acceleration
+            self.ball_speed *= (1 - DRAG)
+
+        # Update vertical position
+        self.ball_y -= self.ball_speed  # Move upward based on speed
+
+        # Update horizontal position based on turning
+        self.ball_x += turn_input
+
+        # Clamp horizontal position to stay within track boundaries
+        left_bound = self.get_track_left(self.ball_y)
+        right_bound = self.get_track_right(self.ball_y)
+        self.ball_x = max(left_bound, min(self.ball_x, right_bound))
+
+    def get_track_left(self, y):
+        """Calculate the left boundary of the S-shaped track based on y position."""
+        return (WIDTH / 2 - TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
+
+    def get_track_right(self, y):
+        """Calculate the right boundary of the S-shaped track based on y position."""
+        return (WIDTH / 2 + TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
+
+    def check_collision(self):
+        """Check if the ball has collided with the sides or reached the top."""
+        ball_left = self.ball_x - BALL_RADIUS
+        ball_right = self.ball_x + BALL_RADIUS
+        left_bound = self.get_track_left(self.ball_y)
+        right_bound = self.get_track_right(self.ball_y)
+        if ball_left <= left_bound or ball_right >= right_bound:
+            return True  # Collision with sides
+        if self.ball_y < 0:  # Ball has reached the top of the screen
+            return True  # Winning condition
+        return False  # No collision
+
+    def render(self, total_reward):
+        """Render the track, ball, and reward display."""
+        self.screen.fill(BACKGROUND_COLOR)
+
+        # Draw the S-shaped track using lines
+        for y in range(0, HEIGHT):
+            x_left = self.get_track_left(y)
+            x_right = self.get_track_right(y)
+            pygame.draw.line(self.screen, TRACK_COLOR,
+                             (x_left, y), (x_right, y))
+
+        # Draw walls
+        for y in range(0, HEIGHT, 5):
+            pygame.draw.line(self.screen, WALL_COLOR, (self.get_track_left(
+                y), y), (self.get_track_left(y), y), 5)
+            pygame.draw.line(self.screen, WALL_COLOR, (self.get_track_right(
+                y), y), (self.get_track_right(y), y), 5)
+
+        # Draw the ball
+        pygame.draw.circle(self.screen, BALL_COLOR, (int(
+            self.ball_x), int(self.ball_y)), BALL_RADIUS)
+
+        # Display reward
+        font = pygame.font.Font(None, 36)
+        reward_text = font.render(
+            f"Total Reward: {total_reward:.2f}", True, (255, 255, 255))
+        self.screen.blit(reward_text, (10, 10))
+
+        pygame.display.flip()
+
+    def get_observation(self):
+        """Get the current state of the environment as an observation vector."""
+        # Return the current ball's position and speed as the state
+        return [self.ball_x / WIDTH, self.ball_y / HEIGHT, self.ball_speed / MAX_SPEED]
+
+# project\model.py
+from torch.utils.tensorboard import SummaryWriter
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+from collections import deque
+
+
+class CarNet(nn.Module):
+    def __init__(self):
+        super(CarNet, self).__init__()
+        self.fc1 = nn.Linear(3, 128)  # 3 inputs for the observation
+        self.fc2 = nn.Linear(128, 128)
+        self.fc3 = nn.Linear(128, 2)  # Output: acceleration and turn angle
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return self.fc3(x)
+
+
+class ModelManager:
+    def __init__(self):
+        self.model = CarNet()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.criterion = nn.MSELoss()
+        self.memory = deque(maxlen=10000)
+        self.batch_size = 64
+        self.gamma = 0.95  # Discount factor
+        self.writer = SummaryWriter()  # Add TensorBoard writer
+
+    def log_activations(self, observation):
+        """Log model layers and activations to TensorBoard."""
+        observation_tensor = torch.tensor(observation, dtype=torch.float32)
+        self.writer.add_graph(self.model, observation_tensor)
+
+        # Forward pass with hooks to log intermediate activations
+        def hook_fn(module, input, output):
+            layer_name = module.__class__.__name__
+            self.writer.add_histogram(f'{layer_name}_activations', output)
+
+        # Register hooks to each layer
+        for layer in self.model.children():
+            layer.register_forward_hook(hook_fn)
+
+        # Run a forward pass to log activations
+        with torch.no_grad():
+            self.model(observation_tensor)
+    def load(self, path="car_model.pth"):
+        """Load model parameters."""
+        self.model.load_state_dict(torch.load(path))
+
+    def save(self, path="car_model.pth"):
+        """Save model parameters."""
+        torch.save(self.model.state_dict(), path)
+
+    def store_experience(self, observation, action, reward, next_observation, done):
+        """Store experience in memory."""
+        self.memory.append(
+            (observation, action, reward, next_observation, done))
+
+    def replay(self):
+        """Train the model using experience replay."""
+        if len(self.memory) < self.batch_size:
+            return
+
+        batch = random.sample(self.memory, self.batch_size)
+        for observation, action, reward, next_observation, done in batch:
+            observation_tensor = torch.tensor(observation, dtype=torch.float32)
+            reward_tensor = torch.tensor(reward, dtype=torch.float32)
+            next_observation_tensor = torch.tensor(
+                next_observation, dtype=torch.float32)
+
+            # Predict current Q-values for the observation
+            current_q_values = self.model(observation_tensor)
+
+            # Calculate target Q-values
+            with torch.no_grad():
+                next_q_values = self.model(next_observation_tensor)
+                max_next_q_value = torch.max(next_q_values)
+                target_q_value = reward_tensor + \
+                    (self.gamma * max_next_q_value * (1 - int(done)))
+
+            # Use target Q-value for only the action taken
+            target_q_values = current_q_values.clone()
+            # Adjust for acceleration action
+            target_q_values[0] = target_q_value if action[0] > 0 else current_q_values[0]
+            # Adjust for turning action
+            target_q_values[1] = target_q_value if action[1] != 0 else current_q_values[1]
+
+            # Compute loss and backpropagate
+            loss = self.criterion(current_q_values, target_q_values)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+# project\main.py
+import pygame
+import sys
+import random
+import torch
+from track_environment import BallEnvironment
+from model import ModelManager
+
+# Initialize environment and model
+env = BallEnvironment()
+model_manager = ModelManager()
+
+# Load model if available
+try:
+    model_manager.load()
+    print("Model loaded successfully.")
+except FileNotFoundError:
+    print("No model found, starting fresh.")
+
+# Game loop parameters
+running = True
+clock = pygame.time.Clock()
+epsilon = 1.0  # Exploration rate
+epsilon_decay = 0.995
+epsilon_min = 0.01
+total_reward = 0
+
+while running:
+    # Event handling
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
+            model_manager.save()  # Save model upon exit
+            running = False
+            break
+
+    # Get observation
+    observation = env.get_observation()
+
+    # Choose action (epsilon-greedy)
+    if random.random() < epsilon:
+        acceleration = random.uniform(-1, 1)
+        turn_angle = random.uniform(-1, 1)
+    else:
+        with torch.no_grad():
+            output = model_manager.model(
+                torch.tensor(observation, dtype=torch.float32))
+            acceleration, turn_angle = output[0].item(), output[1].item()
+
+    # Update car position and check collision
+    env.update_position(acceleration, turn_angle)
+    done = env.check_collision()
+    # Adjust reward based on ball speed and collision
+    if done:
+        reward = -10
+        total_reward = 0  # Reset total reward when collision happens
+        env.reset()
+    else:
+        reward = 0.1 * env.ball_speed
+        total_reward += reward
+
+    # Store experience and replay
+    next_observation = env.get_observation()
+    model_manager.store_experience(
+        observation, (acceleration, turn_angle), reward, next_observation, done)
+    model_manager.replay()
+
+    # Render environment
+    env.render(total_reward)
+
+    # Epsilon decay
+    epsilon = max(epsilon * epsilon_decay, epsilon_min)
+    clock.tick(60)
+
+# Quit pygame
+pygame.quit()
+sys.exit()
