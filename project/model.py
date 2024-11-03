@@ -1,4 +1,3 @@
-# project/model.py
 from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.nn as nn
@@ -40,7 +39,7 @@ class ModelManager:
 
     def load(self, path="car_model.pth"):
         """Load model parameters."""
-        self.model.load_state_dict(torch.load(path))
+        self.model.load_state_dict(torch.load(path, weights_only=True))
 
     def save(self, path="car_model.pth"):
         """Save model parameters."""
@@ -56,35 +55,39 @@ class ModelManager:
             return
 
         batch = random.sample(self.memory, self.batch_size)
+        batch_loss = 0
         for observation, action, reward, next_observation, done in batch:
             observation_tensor = torch.tensor(observation, dtype=torch.float32)
             reward_tensor = torch.tensor(reward, dtype=torch.float32)
             next_observation_tensor = torch.tensor(
                 next_observation, dtype=torch.float32)
 
+            # Get current Q-values and next Q-values
             current_q_values = self.model(observation_tensor)
-
             with torch.no_grad():
                 next_q_values = self.model(next_observation_tensor)
                 max_next_q_value = torch.max(next_q_values)
                 target_q_value = reward_tensor + \
                     (self.gamma * max_next_q_value * (1 - int(done)))
 
+            # Update only the Q-value corresponding to the chosen action
             target_q_values = current_q_values.clone()
             target_q_values[0] = target_q_value if action[0] > 0 else current_q_values[0]
             target_q_values[1] = target_q_value if action[1] != 0 else current_q_values[1]
 
+            # Calculate loss and perform backpropagation
             loss = self.criterion(current_q_values, target_q_values)
             self.optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), 1.0)  # Gradient clipping
             self.optimizer.step()
 
-            # Log the loss to TensorBoard
-            self.writer.add_scalar(
-                "Loss/train", loss.item(), global_step=self.step)
+            # Sum loss for logging
+            batch_loss += loss.item()
 
-            # Increment step counter after each batch update
-            self.step += 1
-
-        # Periodically flush to ensure logs are saved
+        # Log the average loss for the batch to TensorBoard
+        self.writer.add_scalar("Loss/train", batch_loss /
+                               self.batch_size, global_step=self.step)
+        self.step += 1
         self.writer.flush()

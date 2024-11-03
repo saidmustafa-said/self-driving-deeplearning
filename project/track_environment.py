@@ -1,4 +1,3 @@
-# project/track_environment.py
 import pygame
 import math
 
@@ -10,7 +9,7 @@ BACKGROUND_COLOR = (50, 50, 50)
 # Track settings
 TRACK_COLOR = (200, 200, 200)
 WALL_COLOR = (100, 100, 100)
-TRACK_WIDTH = 100  # Width of the track
+TRACK_WIDTH = 150  # Width of the track
 
 # Ball settings
 BALL_COLOR = (255, 0, 0)
@@ -57,13 +56,17 @@ class BallEnvironment:
         right_bound = self.get_track_right(self.ball_y)
         self.ball_x = max(left_bound, min(self.ball_x, right_bound))
 
+    def get_observation(self):
+        """Get the current state of the environment as an observation vector."""
+        return [self.ball_x / WIDTH, self.ball_y / HEIGHT, self.ball_speed / MAX_SPEED]
+
     def get_track_left(self, y):
         """Calculate the left boundary of the S-shaped track based on y position."""
-        return (WIDTH / 2 - TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
+        return (WIDTH / 2 - TRACK_WIDTH / 2) + TRACK_WIDTH * math.sin(2 * math.pi * (y / HEIGHT))
 
     def get_track_right(self, y):
         """Calculate the right boundary of the S-shaped track based on y position."""
-        return (WIDTH / 2 + TRACK_WIDTH / 2) + (TRACK_WIDTH / 1) * math.sin(5 * math.pi * (y / HEIGHT))
+        return (WIDTH / 2 + TRACK_WIDTH / 2) + TRACK_WIDTH * math.sin(2 * math.pi * (y / HEIGHT))
 
     def check_collision(self):
         """Check if the ball has collided with the sides or reached the top."""
@@ -71,11 +74,17 @@ class BallEnvironment:
         ball_right = self.ball_x + BALL_RADIUS
         left_bound = self.get_track_left(self.ball_y)
         right_bound = self.get_track_right(self.ball_y)
+
+        # Collision with track boundaries
         if ball_left <= left_bound or ball_right >= right_bound:
-            return True  # Collision with sides
-        if self.ball_y < 0:  # Ball has reached the top of the screen
-            return True  # Winning condition
-        return False  # No collision
+            return True
+
+        # Winning condition at the top of the screen
+        if self.ball_y <= BALL_RADIUS:
+            print("Reached the finish line!")
+            return True
+
+        return False
 
     def render(self, total_reward):
         """Render the track, ball, and reward display."""
@@ -106,8 +115,3 @@ class BallEnvironment:
         self.screen.blit(reward_text, (10, 10))
 
         pygame.display.flip()
-
-    def get_observation(self):
-        """Get the current state of the environment as an observation vector."""
-        # Return the current ball's position and speed as the state
-        return [self.ball_x / WIDTH, self.ball_y / HEIGHT, self.ball_speed / MAX_SPEED]
