@@ -88,11 +88,10 @@ def evaluate_model(num_episodes=10):
 
     for episode in range(num_episodes):
         total_reward = run_episode(env, model_manager, training=False)
-        print(f"Evaluation Episode {
-              episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
+        print(f"Evaluation Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
 
 
 if __name__ == "__main__":
     # Choose either to train or evaluate the model
-    train_model()  # Comment this line to evaluate instead
-    # evaluate_model()  # Uncomment this line to evaluate
+    # train_model()  # Comment this line to evaluate instead
+    evaluate_model()  # Uncomment this line to evaluate
