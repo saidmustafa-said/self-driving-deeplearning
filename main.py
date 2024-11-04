@@ -1,75 +1,69 @@
 # main.py
-
-import pygame
-import sys
-import random
 import torch
-from track_environment import BallEnvironment  # Updated import
+from track_environment import BallEnvironment
 from model import ModelManager
 
 
-# Initialize environment and model
-env = BallEnvironment()
-model_manager = ModelManager()
+def run_episode(env, model_manager, training=True):
+    """Run a single episode and update the model if training is True."""
+    state = env.get_observation()
+    done = False
+    total_reward = 0
 
-# Load model if available
-try:
-    model_manager.load()
-    print("Model loaded successfully.")
-except FileNotFoundError:
-    print("No model found, starting fresh.")
+    while not done:
+        action = model_manager.choose_action(state)
+        env.update_position(action[0], action[1])
+        env.update_total_score()
 
-# Game loop parameters
-running = True
-clock = pygame.time.Clock()
-epsilon = 1.0  # Exploration rate
-epsilon_decay = 0.995
-epsilon_min = 0.01
-total_reward = 0
+        next_state = env.get_observation()
+        reward = next_state[7]  # Reward from observation vector
+        done = env.check_collision()
 
-while running:
-    # Event handling
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
-            model_manager.save()  # Save model upon exit
-            running = False
-            break
+        if training:
+            model_manager.store_experience(
+                state, action, reward, next_state, done)
+            model_manager.replay()
 
-    # Get observation
-    observation = env.get_observation()
+        state = next_state
+        total_reward += reward
+        env.render()
 
-    # Choose action (epsilon-greedy)
-    if random.random() < epsilon:
-        acceleration = random.uniform(-1, 1)
-        turn_angle = random.uniform(-1, 1)
-    else:
-        with torch.no_grad():
-            output = model_manager.model(
-                torch.tensor(observation, dtype=torch.float32))
-            acceleration, turn_angle = output[0].item(), output[1].item()
+    env.reset()
+    return total_reward
 
-    # Update car position and check collision
-    env.update_position(acceleration, turn_angle)
-    done = env.check_collision()
-    # Adjust reward based on ball speed
-    reward = -10 if done else 0.1 * env.ball_speed
-    if done:
-        env.reset()
 
-    # Store experience and replay
-    next_observation = env.get_observation()
-    model_manager.store_experience(
-        observation, (acceleration, turn_angle), reward, next_observation, done)
-    model_manager.replay()
+def train_model(num_episodes=1000):
+    """Train the model over a set number of episodes."""
+    env = BallEnvironment()
+    model_manager = ModelManager()
 
-    # Render environment
-    total_reward += reward
-    env.render(total_reward)
+    for episode in range(num_episodes):
+        total_reward = run_episode(env, model_manager, training=True)
+        print(
+            f"Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
 
-    # Epsilon decay
-    epsilon = max(epsilon * epsilon_decay, epsilon_min)
-    clock.tick(60)
+        # Log the reward to TensorBoard
+        model_manager.writer.add_scalar(
+            "Episode Reward", total_reward, episode)
 
-# Quit pygame
-pygame.quit()
-sys.exit()
+    # Save the trained model
+    torch.save(model_manager.model.state_dict(), "trained_model.pth")
+    print("Training complete and model saved.")
+
+
+def evaluate_model(num_episodes=10):
+    """Evaluate the model over a set number of episodes without training."""
+    env = BallEnvironment()
+    model_manager = ModelManager()
+    model_manager.model.load_state_dict(torch.load("trained_model.pth"))
+
+    for episode in range(num_episodes):
+        total_reward = run_episode(env, model_manager, training=False)
+        print(f"Evaluation Episode {
+              episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
+
+
+if __name__ == "__main__":
+    # Choose either to train or evaluate the model
+    train_model()  # Comment this line to evaluate instead
+    # evaluate_model()  # Uncomment this line to evaluate

@@ -1,156 +1,98 @@
-import pygame
-import sys
-import random
+# project/main.py
 import torch
 from track_environment import BallEnvironment
 from model import ModelManager
+import sys
 
-# Initialize environment and model
-env = BallEnvironment()
-model_manager = ModelManager()
-
-# Load model if available
-try:
-    model_manager.load()
-    print("Model loaded successfully.")
-except FileNotFoundError:
-    print("No model found, starting fresh.")
-
-# Game loop parameters
-running = True
-clock = pygame.time.Clock()
-epsilon = 1.0  # Exploration rate
-epsilon_decay = 0.995
-epsilon_min = 0.01
-total_reward = 0
-episode_rewards = []
-rolling_average_rewards = []
-rolling_window_size = 100  # Size of the window for averaging
-action_counts = [0, 0]  # Assuming two actions: acceleration and turning
-
-# Main game loop
-while running:
-    # Event handling
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
-            model_manager.save()  # Save model upon exit
-            running = False
-            break
-
-    # Get observation
-    observation = env.get_observation()
-    model_manager.log_activations(observation)  # Log activations
-
-    # Choose action (epsilon-greedy with potential backtracking)
-    if random.random() < epsilon:
-        # Random action for exploration
-        action = [random.uniform(-1, 1), random.choice([-1, 0, 1])]
-    else:
-        # Model-based action for exploitation
-        with torch.no_grad():
-            observation_tensor = torch.tensor(observation, dtype=torch.float32)
-            action_tensor = model_manager.model(observation_tensor)
-
-            # Introduce small random perturbations
-            action = [
-                action_tensor[0].item() + random.uniform(-0.1, 0.1),
-                action_tensor[1].item() + random.uniform(-0.1, 0.1)
-            ]
-
-    # Count selected actions
-    if action[0] > 0:
-        action_counts[0] += 1  # Acceleration action
-    if action[1] != 0:
-        action_counts[1] += 1  # Turning action
-
-    # Update position and check collision
-    env.update_position(action[0], action[1])
-    collision = env.check_collision()
-
-    # Calculate reward
-    if collision:
-        reward = -10  # Penalty for collision
-        env.reset()  # Reset the environment after collision
-    else:
-        reward = 0.1 * env.ball_speed  # Reward based on speed
-
-    total_reward += reward  # Accumulate reward
-
-    # Store experience
-    model_manager.store_experience(
-        observation, action, reward, env.get_observation(), collision)
-
-    # Backtracking logic: If the last action led to collision, slightly adjust
-    if collision:
-        last_action = model_manager.memory[-1][1] if model_manager.memory else action
-        action = [max(0, last_action[0] - 0.1),
-                  last_action[1] + random.uniform(-0.1, 0.1)]
-
-    # Store modified experience
-    model_manager.store_experience(
-        observation, action, reward, env.get_observation(), collision)
-
-    # Perform replay to learn from experiences
-    model_manager.replay()
-
-    # Update epsilon
-    if epsilon > epsilon_min:
-        epsilon *= epsilon_decay
-
-    # Log the total reward and action frequency every episode
-    if collision:  # End of episode
-        episode_rewards.append(total_reward)
-
-        # Calculate the rolling average
-        if len(episode_rewards) >= rolling_window_size:
-            avg_reward = sum(
-                episode_rewards[-rolling_window_size:]) / rolling_window_size
-            rolling_average_rewards.append(avg_reward)
-            print(f"Episode: {len(episode_rewards)}, Total Reward: {
-                  total_reward}, Rolling Average: {avg_reward:.2f}")
-
-        # Print action frequencies periodically
-        if len(episode_rewards) % 100 == 0:
-            print(f"Action Frequencies: Acceleration: {
-                  action_counts[0]}, Turning: {action_counts[1]}")
-
-        # Reset total reward for the next episode
-        total_reward = 0
-
-        # Evaluation logic every 5000 episodes
-        if len(episode_rewards) % 5000 == 0:
-            evaluate_model(env, model_manager)
-
-# Evaluation function
+import pygame  # Import pygame here in main.py as well
 
 
-def evaluate_model(env, model_manager, num_episodes=10):
+def run_episode(env, model_manager, training=True):
+    """Run a single episode and update the model if training is True."""
+    state = env.get_observation()
+    done = False
     total_reward = 0
-    for _ in range(num_episodes):
-        env.reset()
-        episode_reward = 0
-        while True:
-            observation = env.get_observation()
-            with torch.no_grad():
-                observation_tensor = torch.tensor(
-                    observation, dtype=torch.float32)
-                action_tensor = model_manager.model(observation_tensor)
-                action = [action_tensor[0].item(), action_tensor[1].item()]
 
-            # Update position and check collision
-            env.update_position(action[0], action[1])
-            collision = env.check_collision()
+    while not done:
+        # Event handling to ensure Pygame can process events, preventing freezes
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-            # Accumulate rewards
-            episode_reward += 0.1 * env.ball_speed  # or however you define reward
+        # Get the action from the model
+        action = model_manager.choose_action(state)
+        env.update_position(action[0], action[1])
+        env.update_total_score()
 
-            if collision:
-                break
+        # Get the next state and reward, check for done
+        next_state = env.get_observation()
+        reward = next_state[7]  # Reward from observation vector
+        done = env.check_collision()
 
-        total_reward += episode_reward
+        # Store experience and replay if in training mode
+        if training:
+            model_manager.store_experience(
+                state, action, reward, next_state, done)
+            model_manager.replay()
 
-    print(f"Evaluation Average Reward: {total_reward / num_episodes:.2f}")
+        state = next_state
+        total_reward += reward
+
+        # Render and update display
+        env.render()
+        pygame.display.flip()  # Ensure display updates every frame
+        pygame.time.delay(10)  # Delay for smoother rendering
+
+    env.reset()
+    return total_reward
 
 
-# Clean up
-pygame.quit()
+def train_model(num_episodes=1000):
+    """Train the model over a set number of episodes."""
+    env = BallEnvironment()
+    model_manager = ModelManager()
+
+    try:
+        for episode in range(num_episodes):
+            total_reward = run_episode(env, model_manager, training=True)
+            print(
+                f"Episode {episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
+
+            # Log the reward to TensorBoard
+            model_manager.writer.add_scalar(
+                "Episode Reward", total_reward, episode)
+
+            # Save model every 10 episodes for progress tracking
+            if (episode + 1) % 10 == 0:
+                torch.save(model_manager.model.state_dict(),
+                           "trained_model.pth")
+                print("Model checkpoint saved.")
+
+        # Final save after training completes
+        torch.save(model_manager.model.state_dict(), "trained_model.pth")
+        print("Training complete and model saved.")
+
+    except KeyboardInterrupt:
+        print("Training interrupted. Saving model...")
+        torch.save(model_manager.model.state_dict(), "trained_model.pth")
+        print("Model saved after interruption.")
+
+
+
+def evaluate_model(num_episodes=10):
+    """Evaluate the model over a set number of episodes without training."""
+    env = BallEnvironment()
+    model_manager = ModelManager()
+    model_manager.model.load_state_dict(torch.load("trained_model.pth"))
+
+    for episode in range(num_episodes):
+        total_reward = run_episode(env, model_manager, training=False)
+        print(f"Evaluation Episode {
+              episode + 1}/{num_episodes} - Total Reward: {total_reward:.2f}")
+
+
+if __name__ == "__main__":
+    # Choose either to train or evaluate the model
+    train_model()  # Comment this line to evaluate instead
+    # evaluate_model()  # Uncomment this line to evaluate
